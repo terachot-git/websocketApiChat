@@ -7,7 +7,7 @@ const fs = require('fs');
 const cors = require('cors');
 
 const ALLOWED_ORIGINS = [
-    'https://your-frontend-app.vercel.app'
+    'https://chatzzz-gamma.vercel.app/'
 ];
 const PORT = process.env.PORT
 
