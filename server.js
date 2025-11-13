@@ -1,16 +1,81 @@
 const { WebSocketServer } = require('ws');
 const http = require('http');
+const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const cors = require('cors');
 
 const ALLOWED_ORIGINS = [
     'https://your-frontend-app.vercel.app',
     'http://localhost:3000'
 ];
-
 const PORT = process.env.PORT || 3001;
+
+const app = express();
+
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (ALLOWED_ORIGINS.indexOf(origin) !== -1 || !origin) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  optionsSuccessStatus: 200 
+};
+
+app.use(cors(corsOptions));
+
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir);
+}
+
+const fileFilter = (req, file, cb) => {
+    if (file.mimetype === 'image/png' || file.mimetype === 'image/jpeg' || file.mimetype === 'image/gif' || file.mimetype === 'image/webp') {
+        cb(null, true);
+    } else {
+        cb(new Error('Only PNG, JPEG, GIF, and WebP files are allowed!'), false);
+    }
+};
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+        cb(null, Date.now() + path.extname(file.originalname));
+    }
+});
+
+const upload = multer({ 
+    storage: storage,
+    limits: { fileSize: 1024 * 1024 * 5 },
+    fileFilter: fileFilter
+});
+
+app.use('/uploads', express.static(uploadDir));
+
+app.post('/upload', (req, res) => {
+    upload.single('image')(req, res, function (err) {
+        if (err instanceof multer.MulterError) {
+            return res.status(400).send({ error: err.message });
+        } else if (err) {
+            return res.status(400).send({ error: err.message });
+        }
+        
+        if (!req.file) {
+            return res.status(400).send({ error: 'No file uploaded.' });
+        }
+        
+        res.send({ imageUrl: `/uploads/${req.file.filename}` });
+    });
+});
 
 function sanitize(text) {
   if (typeof text !== 'string') {
-    return text;
+    return '';
   }
   return text.replace(/&/g, '&amp;')
              .replace(/</g, '&lt;')
@@ -18,10 +83,7 @@ function sanitize(text) {
              .replace(/"/g, '&quot;');
 }
 
-const server = http.createServer((req, res) => {
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('Not Found. This is a WebSocket server.');
-});
+const server = http.createServer(app);
 
 const wss = new WebSocketServer({ noServer: true });
 
@@ -37,6 +99,29 @@ function heartbeat() {
         ws.isAlive = false;
         ws.ping();
     });
+}
+
+function clearUploads() {
+  console.log('Running cleanup job: Clearing /uploads directory...');
+  fs.readdir(uploadDir, (err, files) => {
+    if (err) {
+      console.error('Failed to read uploads directory:', err);
+      return;
+    }
+
+    for (const file of files) {
+      if (file === '.gitkeep') {
+        continue; 
+      }
+      
+      const filePath = path.join(uploadDir, file);
+      fs.unlink(filePath, (err) => {
+        if (err) {
+          console.error('Failed to delete file:', filePath, err);
+        }
+      });
+    }
+  });
 }
 
 wss.on('connection', (ws, request) => {
@@ -70,14 +155,13 @@ wss.on('connection', (ws, request) => {
                 }
                 ws.lastMessageTime = now;
 
+                if (data.payload.text) {
+                    data.payload.text = sanitize(data.payload.text);
+                }
+
                 if (ws.roomName && rooms.has(ws.roomName)) {
                     const roomClients = rooms.get(ws.roomName);
-                    
-                    const sanitizedPayload = {
-                        sender: data.payload.sender,
-                        text: sanitize(data.payload.text)
-                    };
-                    const messageString = JSON.stringify(sanitizedPayload);
+                    const messageString = JSON.stringify(data.payload);
 
                     roomClients.forEach((client) => {
                         if (client.readyState === ws.OPEN) {
@@ -108,15 +192,17 @@ wss.on('connection', (ws, request) => {
 });
 
 const interval = setInterval(heartbeat, 30000);
+const cleanupInterval = setInterval(clearUploads, 60000);
 
 wss.on('close', function close() {
     clearInterval(interval);
+    clearInterval(cleanupInterval);
 });
 
 server.on('upgrade', (request, socket, head) => {
     const origin = request.headers.origin;
 
-    if (!ALLOWED_ORIGINS.includes(origin)) {
+    if (!ALLOWED_ORIGINS.includes(origin) && origin) { 
         console.log(`Connection from origin ${origin} REJECTED.`);
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
