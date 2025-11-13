@@ -8,6 +8,16 @@ const ALLOWED_ORIGINS = [
 
 const PORT = process.env.PORT || 3001;
 
+function sanitize(text) {
+  if (typeof text !== 'string') {
+    return text;
+  }
+  return text.replace(/&/g, '&amp;')
+             .replace(/</g, '&lt;')
+             .replace(/>/g, '&gt;')
+             .replace(/"/g, '&quot;');
+}
+
 const server = http.createServer((req, res) => {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('Not Found. This is a WebSocket server.');
@@ -62,7 +72,12 @@ wss.on('connection', (ws, request) => {
 
                 if (ws.roomName && rooms.has(ws.roomName)) {
                     const roomClients = rooms.get(ws.roomName);
-                    const messageString = JSON.stringify(data.payload);
+                    
+                    const sanitizedPayload = {
+                        sender: data.payload.sender,
+                        text: sanitize(data.payload.text)
+                    };
+                    const messageString = JSON.stringify(sanitizedPayload);
 
                     roomClients.forEach((client) => {
                         if (client.readyState === ws.OPEN) {
