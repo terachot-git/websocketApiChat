@@ -7,10 +7,9 @@ const fs = require('fs');
 const cors = require('cors');
 
 const ALLOWED_ORIGINS = [
-    'https://your-frontend-app.vercel.app',
-    'http://localhost:3000'
+    'https://your-frontend-app.vercel.app'
 ];
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT
 
 const app = express();
 
